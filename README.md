@@ -1,48 +1,21 @@
-# SWA Pertanian — POS ERP V1
+# SWA Pertanian + Strato Art Studio — Business Manager
 
-POS + mini ERP berbasis GitHub Pages + Google Apps Script + Google Sheets.
+Satu frontend untuk dua entity dengan database Google Sheets yang berbeda.
 
-## Fitur V1
-- Dashboard KPI
-- POS / Penjualan
-- Master Produk / Item
-- Master Customer
-- Invoice
-- Pembayaran, DP, pelunasan, kwitansi
-- Piutang
-- Stok otomatis saat penjualan
-- Stok masuk / keluar manual
-- Produk stok menipis
-- Laporan ringkas
+## Entity
+- SWA Pertanian → Apps Script SWA
+- Strato Art Studio → Apps Script Strato
 
-## Sheet yang digunakan
-Existing:
-- INVOICE
-- INVOICE_DETAIL
-- CUSTOMER
-- SETTINGS
+Switch entity di dropdown kanan atas. API URL dan logo berubah otomatis.
 
-Otomatis dibuat jika belum ada:
-- PAYMENT
-- PRODUCT
-- STOCK_MOVEMENT
+## Apps Script
+Kedua spreadsheet harus memakai struktur: INVOICE, INVOICE_DETAIL, CUSTOMER, SETTINGS. Backend POS/ERP yang disertakan juga otomatis membuat PAYMENT, PRODUCT, STOCK_MOVEMENT bila belum ada.
 
-### PRODUCT
-Header: Product ID, Kode Produk, Nama Produk, Kategori, Satuan, Harga Beli, Harga Jual, Stok, Minimum Stok, Supplier, Aktif
+### SWA
+Gunakan Code.gs yang sekarang sudah terpasang pada deployment SWA.
 
-### STOCK_MOVEMENT
-Header: Movement ID, Tanggal, Product ID, Kode Produk, Nama Produk, Tipe, Qty, Referensi, Catatan
-
-## Backend
-Ganti Code.gs di Apps Script dengan file Code.gs ini, lalu deploy sebagai Web App.
-Execute as: Me.
-Who has access: Anyone (sesuaikan kebijakan akses).
-Setelah perubahan Code.gs, buat deployment/version baru.
+### Strato
+Replace Code.gs Strato dengan `Code.gs` dari paket ini, lalu deploy sebagai Web App (Execute as Me, akses sesuai kebutuhan). Ini menyamakan API Strato dengan API ERP SWA.
 
 ## Frontend
-Upload index.html, css/style.css, js/app.js ke GitHub Pages.
-API URL sudah diarahkan ke Web App SWA Pertanian.
-
-
-## V1.2 API fix
-Versi ini menggunakan GET untuk endpoint read-only (`getInitialData`, `getInvoices`, `getInvoice`, `getPayments`, `getDashboard`) agar pembacaan data tidak bergantung pada POST. Setelah mengganti `Code.gs`, **Deploy > Manage deployments > Edit > New version > Deploy**. URL Web App tetap sama.
+Upload seluruh isi folder ke GitHub Pages, termasuk `assets/StratoArtStudio.svg`.
