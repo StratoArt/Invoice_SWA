@@ -1,384 +1,45 @@
-const API_URL = 'https://script.google.com/macros/s/AKfycbxkKovujMdEdhLqPkYp24adCWmBcX06s-HE3PVXJML36ORlOmH27n1qjKB08kBYZ429kA/exec';
-
-const APP = {
-  customers: [],
-  invoices: [],
-  settings: {}
-};
-
-const $ = id => document.getElementById(id);
-
-
-document.addEventListener('DOMContentLoaded', () => {
-  $('newInvoiceBtn').onclick = openNewInvoice;
-  $('refreshBtn').onclick = loadData;
-  $('addItemBtn').onclick = () => addItem();
-  $('saveBtn').onclick = saveInvoice;
-  $('printBtn').onclick = () => window.print();
-  $('searchInput').oninput = filterInvoices;
-  $('customerSelect').onchange = selectCustomer;
-  $('taxPercent').oninput = calculate;
-
-  document.querySelectorAll('[data-close]').forEach(button => {
-    button.onclick = () => closeModal(button.dataset.close);
-  });
-
-  $('invoiceDate').value = todayLocal();
-  loadData();
-});
-
-
-async function api(action, payload = {}) {
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, ...payload })
-  });
-
-  if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-
-  const data = await response.json();
-  if (data.success === false) {
-    throw new Error(data.message || data.error || 'API error');
-  }
-  return data;
-}
-
-
-async function loadData() {
-  try {
-    const data = await api('getInitialData');
-    APP.customers = data.customers || [];
-    APP.invoices = data.invoices || [];
-    APP.settings = data.settings || {};
-    renderCustomers();
-    renderInvoices();
-    renderStats();
-  } catch (error) {
-    console.error('LOAD DATA ERROR:', error);
-    toast(error.message || 'Gagal mengambil data.', true);
-  }
-}
-
-
-function renderStats() {
-  const paid = APP.invoices.filter(x => String(x.status).toLowerCase() === 'paid').length;
-  const unpaid = APP.invoices.filter(x => ['unpaid', 'partially paid', 'sent'].includes(String(x.status).toLowerCase())).length;
-
-  $('stats').innerHTML = `
-    <div class="stat"><b>${APP.invoices.length}</b><span>TOTAL INVOICE</span></div>
-    <div class="stat"><b>${paid}</b><span>PAID</span></div>
-    <div class="stat"><b>${unpaid}</b><span>OUTSTANDING</span></div>
-  `;
-}
-
-
-function renderCustomers() {
-  $('customerSelect').innerHTML = '<option value="">-- Pilih Customer --</option>' +
-    APP.customers.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.id)} - ${escapeHtml(c.name)}</option>`).join('');
-}
-
-
-function renderInvoices(list = APP.invoices) {
-  $('emptyState').hidden = !!list.length;
-  $('invoiceList').innerHTML = list.map(x => `
-    <tr>
-      <td><strong>${escapeHtml(x.invoiceNo)}</strong></td>
-      <td>${escapeHtml(x.date)}</td>
-      <td>${escapeHtml(x.customer)}</td>
-      <td>${money(x.grandTotal)}</td>
-      <td><span class="status ${statusClass(x.status)}">${escapeHtml(x.status)}</span></td>
-      <td><button class="btn btn-light btn-small" onclick="previewInvoice('${encodeURIComponent(x.invoiceNo)}')">View</button></td>
-    </tr>
-  `).join('');
-}
-
-
-function filterInvoices() {
-  const q = $('searchInput').value.toLowerCase().trim();
-  renderInvoices(APP.invoices.filter(x =>
-    String(x.invoiceNo || '').toLowerCase().includes(q) ||
-    String(x.customer || '').toLowerCase().includes(q)
-  ));
-}
-
-
-function openNewInvoice() {
-  $('invoiceNo').value = '';
-  $('customerSelect').value = '';
-  $('customer').value = '';
-  $('phone').value = '';
-  $('email').value = '';
-  $('address').value = '';
-  $('notes').value = '';
-  $('status').value = 'Draft';
-  $('paymentMethod').value = 'Transfer Bank';
-  $('taxPercent').value = APP.settings['Pajak Default (%)'] || 0;
-  $('invoiceDate').value = todayLocal();
-  $('itemsBody').innerHTML = '';
-  addItem();
-  openModal('formModal');
-}
-
-
-function selectCustomer() {
-  const customer = APP.customers.find(x => x.id === $('customerSelect').value);
-  if (!customer) return;
-  $('customer').value = customer.name || '';
-  $('phone').value = customer.phone || '';
-  $('email').value = customer.email || '';
-  $('address').value = customer.address || '';
-}
-
-
-function addItem(item = {}) {
-  const row = document.createElement('tr');
-  row.innerHTML = `
-    <td class="item-no"></td>
-    <td><input class="description" type="text" value="${escapeAttr(item.description || '')}"></td>
-    <td><input class="qty" type="number" min="0" step="any" value="${item.qty ?? 1}"></td>
-    <td><input class="price" type="number" min="0" step="any" value="${item.price ?? 0}"></td>
-    <td class="item-total">Rp 0</td>
-    <td><button type="button" class="delete-item">×</button></td>
-  `;
-
-  row.querySelectorAll('input').forEach(input => input.oninput = calculate);
-  row.querySelector('.delete-item').onclick = () => {
-    row.remove();
-    renumber();
-    calculate();
-  };
-
-  $('itemsBody').appendChild(row);
-  renumber();
-  calculate();
-}
-
-
-function renumber() {
-  document.querySelectorAll('.item-no').forEach((el, i) => el.textContent = i + 1);
-}
-
-
-function getItems() {
-  return [...document.querySelectorAll('#itemsBody tr')]
-    .map(row => ({
-      description: row.querySelector('.description').value.trim(),
-      qty: Number(row.querySelector('.qty').value) || 0,
-      price: Number(row.querySelector('.price').value) || 0
-    }))
-    .filter(x => x.description || x.qty || x.price);
-}
-
-
-function calculate() {
-  let subtotal = 0;
-
-  document.querySelectorAll('#itemsBody tr').forEach(row => {
-    const qty = Number(row.querySelector('.qty').value) || 0;
-    const price = Number(row.querySelector('.price').value) || 0;
-    const total = qty * price;
-    subtotal += total;
-    row.querySelector('.item-total').textContent = money(total);
-  });
-
-  const taxPercent = Number($('taxPercent').value) || 0;
-  const tax = subtotal * taxPercent / 100;
-  const grandTotal = subtotal + tax;
-
-  $('subtotal').textContent = money(subtotal);
-  $('tax').textContent = money(tax);
-  $('grandTotal').textContent = money(grandTotal);
-}
-
-
-async function saveInvoice() {
-  const data = {
-    invoiceNo: $('invoiceNo').value,
-    date: $('invoiceDate').value,
-    customerId: $('customerSelect').value,
-    customer: $('customer').value.trim(),
-    phone: $('phone').value.trim(),
-    email: $('email').value.trim(),
-    address: $('address').value.trim(),
-    taxPercent: Number($('taxPercent').value) || 0,
-    status: $('status').value,
-    paymentMethod: $('paymentMethod').value,
-    notes: $('notes').value.trim(),
-    items: getItems()
-  };
-
-  if (!data.customer) return toast('Nama customer belum diisi.', true);
-  if (!data.items.length) return toast('Minimal ada 1 item.', true);
-
-  try {
-    $('saveBtn').disabled = true;
-    $('saveBtn').textContent = 'Menyimpan...';
-
-    const result = await api('saveInvoice', { invoice: data });
-
-    closeModal('formModal');
-    toast(`Invoice ${result.invoiceNo} berhasil disimpan.`);
-    await loadData();
-    await previewInvoice(encodeURIComponent(result.invoiceNo));
-  } catch (error) {
-    console.error('SAVE INVOICE ERROR:', error);
-    toast(error.message || 'Gagal menyimpan invoice.', true);
-  } finally {
-    $('saveBtn').disabled = false;
-    $('saveBtn').textContent = 'Simpan Invoice';
-  }
-}
-
-
-async function previewInvoice(encodedInvoiceNo) {
-  try {
-    const invoiceNo = decodeURIComponent(encodedInvoiceNo);
-    const invoice = await api('getInvoice', { invoiceNo });
-    $('printArea').innerHTML = buildInvoiceHTML(invoice);
-    openModal('previewModal');
-  } catch (error) {
-    console.error('PREVIEW INVOICE ERROR:', error);
-    toast(error.message || 'Gagal membuka invoice.', true);
-  }
-}
-
-
-function buildInvoiceHTML(invoice) {
-  const s = APP.settings;
-  const company = s['Nama Perusahaan'] || 'SWA Pertanian';
-  const address = s['Alamat Perusahaan'] || '';
-  const phone = s['Telepon'] || '';
-  const email = s['Email'] || '';
-  const bank = s['Nama Bank'] || '';
-  const account = s['No. Rekening'] || '';
-  const accountName = s['Atas Nama'] || '';
-
-  const rows = (invoice.items || []).map(item => `
-    <tr>
-      <td>${escapeHtml(item.no)}</td>
-      <td>${escapeHtml(item.description)}</td>
-      <td class="center">${escapeHtml(item.qty)}</td>
-      <td class="right">${money(item.price)}</td>
-      <td class="right">${money(item.total)}</td>
-    </tr>
-  `).join('');
-
-  return `
-    <div class="invoice">
-      <div class="invoice-top">
-        <div class="invoice-company">
-          <div class="invoice-company-name">${escapeHtml(company)}</div>
-          <div class="invoice-company-sub">${escapeHtml(address)}</div>
-          ${phone || email ? `<div class="invoice-company-contact">${escapeHtml(phone)}${phone && email ? ' · ' : ''}${escapeHtml(email)}</div>` : ''}
-        </div>
-        <div class="invoice-heading">
-          <div class="invoice-title">INVOICE</div>
-          <div class="invoice-meta"><strong>${escapeHtml(invoice.invoiceNo)}</strong><br>${escapeHtml(invoice.date)}</div>
-        </div>
-      </div>
-
-      <div class="invoice-accent"></div>
-
-      <div class="invoice-info">
-        <div>
-          <div class="label-mini">BILL TO</div>
-          <div class="customer-name">${escapeHtml(invoice.customer)}</div>
-          ${invoice.phone ? `<div>${escapeHtml(invoice.phone)}</div>` : ''}
-          ${invoice.email ? `<div>${escapeHtml(invoice.email)}</div>` : ''}
-          ${invoice.address ? `<div>${escapeHtml(invoice.address)}</div>` : ''}
-        </div>
-        <div class="invoice-status-box">
-          <span>STATUS</span>
-          <strong>${escapeHtml(invoice.status || '')}</strong>
-        </div>
-      </div>
-
-      <table class="invoice-table">
-        <thead>
-          <tr><th>NO</th><th>DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>TOTAL</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-
-      <div class="invoice-bottom">
-        <div class="payment">
-          <div class="label-mini">PAYMENT METHOD</div>
-          <strong>${escapeHtml(invoice.paymentMethod || '')}</strong>
-          ${bank || account || accountName ? `
-            <div class="bank-box">
-              ${bank ? `<div><span>Bank</span><strong>${escapeHtml(bank)}</strong></div>` : ''}
-              ${account ? `<div><span>No. Rekening</span><strong>${escapeHtml(account)}</strong></div>` : ''}
-              ${accountName ? `<div><span>Atas Nama</span><strong>${escapeHtml(accountName)}</strong></div>` : ''}
-            </div>` : ''}
-        </div>
-
-        <div class="summary">
-          <div class="summary-row"><span>Sub Total</span><strong>${money(invoice.subtotal)}</strong></div>
-          <div class="summary-row"><span>Tax ${invoice.taxPercent}%</span><strong>${money(invoice.tax)}</strong></div>
-          <div class="summary-grand"><span>GRAND TOTAL</span><strong>${money(invoice.grandTotal)}</strong></div>
-        </div>
-      </div>
-
-      ${invoice.notes ? `<div class="invoice-notes"><div class="label-mini">CATATAN</div>${escapeHtml(invoice.notes)}</div>` : ''}
-
-      <div class="invoice-footer">
-        <strong>${escapeHtml(company)}</strong>
-        <span>${escapeHtml(phone)}</span>
-        <span>${escapeHtml(email)}</span>
-      </div>
-    </div>
-  `;
-}
-
-
-function openModal(id) {
-  const modal = $(id);
-  if (!modal) return;
-  modal.classList.add('show');
-  modal.setAttribute('aria-hidden', 'false');
-}
-
-function closeModal(id) {
-  const modal = $(id);
-  if (!modal) return;
-  modal.classList.remove('show');
-  modal.setAttribute('aria-hidden', 'true');
-}
-
-function money(value) {
-  return 'Rp ' + Number(value || 0).toLocaleString('id-ID');
-}
-
-function statusClass(status) {
-  return String(status || 'draft').toLowerCase().replace(/\s+/g, '-');
-}
-
-function toast(message, isError = false) {
-  const element = $('toast');
-  if (!element) return;
-  element.textContent = message;
-  element.classList.toggle('error', isError);
-  element.classList.add('show');
-  clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(() => element.classList.remove('show'), 2800);
-}
-
-function todayLocal() {
-  const d = new Date();
-  const offset = d.getTimezoneOffset();
-  return new Date(d.getTime() - offset * 60000).toISOString().slice(0, 10);
-}
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, c => ({
-    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;'
-  }[c]));
-}
-
-function escapeAttr(value) {
-  return escapeHtml(value);
-}
-
-window.previewInvoice = previewInvoice;
-window.saveInvoice = saveInvoice;
+const API_URL='https://script.google.com/macros/s/AKfycbxkKovujMdEdhLqPkYp24adCWmBcX06s-HE3PVXJML36ORlOmH27n1qjKB08kBYZ429kA/exec';
+const APP={customers:[],invoices:[],products:[],settings:{},dashboard:{},cart:[],currentInvoice:null,currentPaymentInvoice:null};
+const $=id=>document.getElementById(id);
+document.addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>showPage(b.dataset.page));document.querySelectorAll('[data-page-link]').forEach(b=>b.onclick=()=>showPage(b.dataset.pageLink));$('refreshBtn').onclick=loadData;$('quickSaleBtn').onclick=()=>showPage('pos');$('dashboardSaleBtn').onclick=()=>showPage('pos');$('newInvoiceBtn').onclick=openNewInvoice;$('addItemBtn').onclick=()=>addItem();$('saveBtn').onclick=saveInvoice;$('printBtn').onclick=()=>window.print();$('paymentHistoryBtn').onclick=()=>openPaymentHistory(APP.currentInvoice);$('recordPaymentBtn').onclick=recordPayment;$('searchInput').oninput=filterInvoices;$('customerSelect').onchange=selectCustomer;$('taxPercent').oninput=calculate;$('productSearch').oninput=renderProducts;$('customerSearch').oninput=renderCustomerTable;$('posSearch').oninput=renderPicker;$('addPosItem').onclick=()=>{const q=$('posSearch').value.trim();const p=APP.products.find(x=>x.code.toLowerCase()===q.toLowerCase()||x.name.toLowerCase()===q.toLowerCase());if(p)addCart(p);else toast('Produk tidak ditemukan.',true);};$('checkoutBtn').onclick=checkout;$('newProductBtn').onclick=()=>openProductForm();$('newCustomerBtn').onclick=()=>openCustomerForm();$('stockInBtn').onclick=()=>openStockForm();document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeModal(b.dataset.close));$('invoiceDate').value=todayLocal();$('paymentDate').value=todayLocal();loadData();});
+async function api(action,payload={}){const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload})});if(!r.ok)throw Error('HTTP Error '+r.status);const d=await r.json();if(d.success===false)throw Error(d.message||'API error');return d;}
+async function loadData(){try{setConnection('● Syncing');const d=await api('getInitialData');APP.customers=d.customers||[];APP.invoices=d.invoices||[];APP.products=d.products||[];APP.settings=d.settings||{};APP.dashboard=d.dashboard||{};renderAll();setConnection('● Online');}catch(e){console.error(e);setConnection('● Offline');toast(e.message||'Gagal mengambil data.',true);}}
+function renderAll(){renderCustomers();renderCustomerTable();renderInvoices();renderProducts();renderStock();renderStats();renderDashboard();renderPicker();renderCart();renderPayments();renderReports();}
+function showPage(page){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));$('page-'+page)?.classList.add('active');document.querySelector(`.nav[data-page="${page}"]`)?.classList.add('active');}
+function setConnection(t){$('connection').textContent=t;}
+function renderStats(){const d=APP.dashboard; $('dashStats').innerHTML=`${kpi('Penjualan Bulan Ini',money(d.monthSales||0),'sales')}${kpi('Pembayaran Bulan Ini',money(d.monthPaid||0),'paid')}${kpi('Piutang',money(d.outstanding||0),'debt')}${kpi('Produk Aktif',d.productCount||0,'products')}${kpi('Stok Menipis',d.lowStock||0,'warning')}`;}
+function kpi(label,val,cls){return`<div class="kpi ${cls}"><span>${label}</span><strong>${val}</strong></div>`;}
+function renderDashboard(){const d=APP.dashboard; $('recentList').innerHTML=(d.recentInvoices||[]).map(x=>`<tr><td><strong>${esc(x.invoiceNo)}</strong></td><td>${esc(x.date)}</td><td>${esc(x.customer)}</td><td>${money(x.grandTotal)}</td><td><span class="status ${statusClass(x.status)}">${esc(x.status)}</span></td></tr>`).join('')||emptyRow(5,'Belum ada transaksi.');$('lowStockList').innerHTML=(d.lowStockItems||[]).map(x=>`<div class="stock-alert"><div><b>${esc(x.name)}</b><small>${esc(x.code)} • min ${x.minStock}</small></div><strong>${x.stock}</strong></div>`).join('')||'<div class="empty">Stok aman.</div>';renderRank('topProducts',d.topProducts||[]);}
+function renderRank(id,list){$(id).innerHTML=list.map((x,i)=>`<div class="rank"><b>${i+1}</b><span>${esc(x.name)}</span><strong>${x.qty}</strong></div>`).join('')||'<div class="empty">Belum ada data.</div>';}
+function renderCustomers(){ $('customerSelect').innerHTML='<option value="">-- Pilih Customer --</option>'+APP.customers.map(c=>`<option value="${escAttr(c.id)}">${esc(c.id)} — ${esc(c.name)}</option>`).join('');$('posCustomer').innerHTML='<option value="">Customer Umum</option>'+APP.customers.map(c=>`<option value="${escAttr(c.id)}">${esc(c.name)}</option>`).join('');}
+function renderCustomerTable(){const q=($('customerSearch')?.value||'').toLowerCase();const a=APP.customers.filter(c=>(c.id+c.name+c.phone).toLowerCase().includes(q));$('customerList').innerHTML=a.map(c=>`<tr><td><strong>${esc(c.id)}</strong></td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td><td>${esc(c.email)}</td><td>${esc(c.address)}</td><td><button class="btn btn-light btn-small" onclick="openCustomerForm('${escAttr(c.id)}')">Edit</button></td></tr>`).join('')||emptyRow(6,'Belum ada customer.');}
+function openCustomerForm(id=''){const c=APP.customers.find(x=>x.id===id)||{};$('genericTitle').textContent=id?'Edit Customer':'Tambah Customer';$('genericBody').innerHTML=`<div class="form-grid"><label>Customer ID<input id="gId" value="${escAttr(c.id||'')}" placeholder="Otomatis" ${id?'readonly':''}></label><label>Nama Customer<input id="gName" value="${escAttr(c.name||'')}"></label><label>Telepon<input id="gPhone" value="${escAttr(c.phone||'')}"></label><label>Email<input id="gEmail" value="${escAttr(c.email||'')}"></label><label class="full">Alamat<textarea id="gAddress">${esc(c.address||'')}</textarea></label></div><div class="modal-actions"><button class="btn btn-light" data-close="genericModal">Batal</button><button class="btn btn-primary" onclick="saveCustomer('${escAttr(id)}')">Simpan Customer</button></div>`;openModal('genericModal');}
+async function saveCustomer(id){try{const c={id:$('gId').value.trim(),name:$('gName').value.trim(),phone:$('gPhone').value.trim(),email:$('gEmail').value.trim(),address:$('gAddress').value.trim()};await api(id?'updateCustomer':'addCustomer',{customer:c});closeModal('genericModal');toast('Customer berhasil disimpan.');await loadData();}catch(e){toast(e.message,true);}}
+function renderProducts(){const q=($('productSearch')?.value||'').toLowerCase();const a=APP.products.filter(p=>(p.code+p.name+p.category).toLowerCase().includes(q));$('productList').innerHTML=a.map(p=>`<tr><td><strong>${esc(p.code)}</strong></td><td>${esc(p.name)}</td><td>${esc(p.category)}</td><td>${esc(p.unit)}</td><td>${money(p.sellPrice)}</td><td class="${p.stock<=p.minStock?'low':''}">${p.stock}</td><td>${p.minStock}</td><td>${p.active?'Aktif':'Nonaktif'}</td><td><button class="btn btn-light btn-small" onclick="openProductForm('${escAttr(p.id)}')">Edit</button></td></tr>`).join('')||emptyRow(9,'Belum ada produk.');}
+function openProductForm(id=''){const p=APP.products.find(x=>x.id===id)||{};$('genericTitle').textContent=id?'Edit Produk':'Tambah Produk';$('genericBody').innerHTML=`<div class="form-grid"><label>Product ID<input id="gId" value="${escAttr(p.id||'')}" placeholder="Otomatis" ${id?'readonly':''}></label><label>Kode Produk<input id="gCode" value="${escAttr(p.code||'')}" placeholder="Contoh: VAY-250"></label><label class="full">Nama Produk<input id="gName" value="${escAttr(p.name||'')}"></label><label>Kategori<input id="gCategory" value="${escAttr(p.category||'Pestisida')}"></label><label>Satuan<input id="gUnit" value="${escAttr(p.unit||'pcs')}"></label><label>Harga Beli<input id="gBuy" type="number" value="${p.buyPrice||0}"></label><label>Harga Jual<input id="gSell" type="number" value="${p.sellPrice||0}"></label><label>Stok<input id="gStock" type="number" value="${p.stock||0}"></label><label>Minimum Stok<input id="gMin" type="number" value="${p.minStock||0}"></label><label>Supplier<input id="gSupplier" value="${escAttr(p.supplier||'')}"></label><label>Aktif<select id="gActive"><option value="true" ${p.active!==false?'selected':''}>Aktif</option><option value="false" ${p.active===false?'selected':''}>Nonaktif</option></select></label></div><div class="modal-actions"><button class="btn btn-light" data-close="genericModal">Batal</button><button class="btn btn-primary" onclick="saveProduct('${escAttr(id)}')">Simpan Produk</button></div>`;openModal('genericModal');}
+async function saveProduct(id){try{const p={id:$('gId').value.trim(),code:$('gCode').value.trim(),name:$('gName').value.trim(),category:$('gCategory').value.trim(),unit:$('gUnit').value.trim(),buyPrice:Number($('gBuy').value)||0,sellPrice:Number($('gSell').value)||0,stock:Number($('gStock').value)||0,minStock:Number($('gMin').value)||0,supplier:$('gSupplier').value.trim(),active:$('gActive').value==='true'};await api(id?'updateProduct':'addProduct',{product:p});closeModal('genericModal');toast('Produk berhasil disimpan.');await loadData();}catch(e){toast(e.message,true);}}
+function renderStock(){const a=APP.products.filter(p=>p.active);$('stockList').innerHTML=a.map(p=>`<tr><td>${esc(p.code)}</td><td><strong>${esc(p.name)}</strong></td><td>${p.stock}</td><td>${p.minStock}</td><td>${p.stock-p.minStock}</td><td><span class="status ${p.stock<=p.minStock?'unpaid':'paid'}">${p.stock<=p.minStock?'Menipis':'Aman'}</span></td><td><button class="btn btn-light btn-small" onclick="openStockForm('${escAttr(p.id)}')">Atur</button></td></tr>`).join('')||emptyRow(7,'Belum ada produk.');}
+function openStockForm(id=''){const p=APP.products.find(x=>x.id===id)||APP.products[0]||{};$('genericTitle').textContent='Stok Masuk / Keluar';$('genericBody').innerHTML=`<div class="form-grid"><label class="full">Produk<select id="gProduct">${APP.products.filter(x=>x.active).map(x=>`<option value="${escAttr(x.id)}" ${x.id===p.id?'selected':''}>${esc(x.code)} — ${esc(x.name)} (stok ${x.stock})</option>`).join('')}</select></label><label>Tipe<select id="gType"><option value="IN">Stok Masuk</option><option value="OUT">Stok Keluar</option></select></label><label>Qty<input id="gQty" type="number" min="1" value="1"></label><label>Tanggal<input id="gDate" type="date" value="${todayLocal()}"></label><label>Referensi<input id="gRef" placeholder="PO / retur / opname"></label><label>Catatan<input id="gNotes"></label></div><div class="modal-actions"><button class="btn btn-light" data-close="genericModal">Batal</button><button class="btn btn-primary" onclick="saveStock()">Simpan Stok</button></div>`;openModal('genericModal');}
+async function saveStock(){try{await api('adjustStock',{movement:{productId:$('gProduct').value,type:$('gType').value,qty:Number($('gQty').value),date:$('gDate').value,reference:$('gRef').value,notes:$('gNotes').value}});closeModal('genericModal');toast('Stok berhasil diperbarui.');await loadData();}catch(e){toast(e.message,true);}}
+function renderPicker(){const q=($('posSearch')?.value||'').toLowerCase();const a=APP.products.filter(p=>p.active&&(p.code+p.name+p.category).toLowerCase().includes(q));$('productPicker').innerHTML=a.slice(0,24).map(p=>`<button class="product-tile" onclick="addCartById('${escAttr(p.id)}')"><small>${esc(p.code)}</small><b>${esc(p.name)}</b><span>${money(p.sellPrice)} / ${esc(p.unit)}</span><em>Stok ${p.stock}</em></button>`).join('')||'<div class="empty">Produk tidak ditemukan.</div>';}
+function addCartById(id){const p=APP.products.find(x=>x.id===id);if(p)addCart(p);}
+function addCart(p){const x=APP.cart.find(i=>i.id===p.id);if(x){if(x.qty+1>p.stock)return toast('Stok tidak cukup.',true);x.qty++;}else{if(p.stock<1)return toast('Stok habis.',true);APP.cart.push({id:p.id,code:p.code,name:p.name,qty:1,price:p.sellPrice});}renderCart();}
+function renderCart(){const body=$('cartBody');body.innerHTML=APP.cart.map((x,i)=>`<tr><td><strong>${esc(x.name)}</strong><small class="muted">${esc(x.code)}</small></td><td><div class="qty-control"><button onclick="changeCart(${i},-1)">−</button><b>${x.qty}</b><button onclick="changeCart(${i},1)">+</button></div></td><td>${money(x.price)}</td><td>${money(x.qty*x.price)}</td><td><button class="delete-item" onclick="removeCart(${i})">×</button></td></tr>`).join('')||emptyRow(5,'Keranjang kosong.');$('cartCount').textContent=APP.cart.reduce((s,x)=>s+x.qty,0)+' item';const sub=APP.cart.reduce((s,x)=>s+x.qty*x.price,0);$('checkoutSummary').innerHTML=`<div class="checkout-row"><span>Subtotal</span><strong>${money(sub)}</strong></div><div class="checkout-row total"><span>TOTAL</span><strong>${money(sub)}</strong></div>`;}
+function changeCart(i,d){const x=APP.cart[i],p=APP.products.find(p=>p.id===x.id);x.qty+=d;if(x.qty<=0)APP.cart.splice(i,1);else if(x.qty>p.stock){x.qty=p.stock;toast('Maksimal sesuai stok.',true);}renderCart();}function removeCart(i){APP.cart.splice(i,1);renderCart();}
+async function checkout(){if(!APP.cart.length)return toast('Keranjang masih kosong.',true);const c=APP.customers.find(x=>x.id===$('posCustomer').value)||{id:'',name:'Customer Umum',phone:'',email:'',address:''};const items=APP.cart.map(x=>({description:x.name,qty:x.qty,price:x.price}));try{$('checkoutBtn').disabled=true;$('checkoutBtn').textContent='Memproses...';const r=await api('saveInvoice',{invoice:{date:todayLocal(),customerId:c.id,customer:c.name,phone:c.phone,email:c.email,address:c.address,taxPercent:0,status:'Unpaid',paymentMethod:$('posMethod').value,notes:$('posNotes').value,items}});await api('recordPayment',{payment:{invoiceNo:r.invoiceNo,date:todayLocal(),amount:r.grandTotal,method:$('posMethod').value,notes:'Pembayaran POS'}});APP.cart=[];$('posNotes').value='';await loadData();toast('Penjualan berhasil.');await previewInvoice(encodeURIComponent(r.invoiceNo));}catch(e){toast(e.message,true);}finally{$('checkoutBtn').disabled=false;$('checkoutBtn').textContent='Proses Penjualan';}}
+function renderInvoices(list=APP.invoices){$('emptyState').hidden=!!list.length;$('invoiceList').innerHTML=list.map(x=>`<tr><td><strong>${esc(x.invoiceNo)}</strong></td><td>${esc(x.date)}</td><td>${esc(x.customer)}</td><td>${money(x.grandTotal)}</td><td>${money(x.paidAmount)}</td><td>${money(x.remainingAmount)}</td><td><span class="status ${statusClass(x.status)}">${esc(x.status)}</span></td><td><div class="row-actions"><button class="btn btn-light btn-small" onclick="previewInvoice('${encodeURIComponent(x.invoiceNo)}')">View</button>${x.status!=='Paid'&&x.status!=='Cancelled'?`<button class="btn btn-primary btn-small" onclick="openPayment('${encodeURIComponent(x.invoiceNo)}')">Bayar</button>`:''}${x.status==='Paid'?`<button class="btn btn-light btn-small" onclick="printReceipt('${encodeURIComponent(x.invoiceNo)}')">Kwitansi</button>`:''}</div></td></tr>`).join('');}
+function filterInvoices(){const q=$('searchInput').value.toLowerCase();renderInvoices(APP.invoices.filter(x=>(x.invoiceNo+x.customer).toLowerCase().includes(q)));}
+function openNewInvoice(){resetInvoiceForm();openModal('formModal');}function resetInvoiceForm(){$('invoiceNo').value='';$('customerSelect').value='';$('customer').value='';$('phone').value='';$('email').value='';$('address').value='';$('notes').value='';$('status').value='Draft';$('paymentMethod').value='Transfer Bank';$('taxPercent').value=APP.settings['Pajak Default (%)']||0;$('invoiceDate').value=todayLocal();$('itemsBody').innerHTML='';addItem();}
+function selectCustomer(){const c=APP.customers.find(x=>x.id===$('customerSelect').value);if(c){$('customer').value=c.name;$('phone').value=c.phone;$('email').value=c.email;$('address').value=c.address;}}
+function addItem(item={}){const r=document.createElement('tr');r.innerHTML=`<td class="item-no"></td><td><input class="description" value="${escAttr(item.description||'')}"></td><td><input class="qty" type="number" min="0" value="${item.qty??1}"></td><td><input class="price" type="number" min="0" value="${item.price??0}"></td><td class="item-total">Rp 0</td><td><button class="delete-item">×</button></td>`;r.querySelectorAll('input').forEach(x=>x.oninput=calculate);r.querySelector('.delete-item').onclick=()=>{r.remove();renumber();calculate();};$('itemsBody').appendChild(r);renumber();calculate();}
+function renumber(){document.querySelectorAll('.item-no').forEach((x,i)=>x.textContent=i+1);}function getItems(){return[...document.querySelectorAll('#itemsBody tr')].map(r=>({description:r.querySelector('.description').value.trim(),qty:Number(r.querySelector('.qty').value)||0,price:Number(r.querySelector('.price').value)||0})).filter(x=>x.description||x.qty||x.price);}function calculate(){let sub=0;document.querySelectorAll('#itemsBody tr').forEach(r=>{const t=(Number(r.querySelector('.qty').value)||0)*(Number(r.querySelector('.price').value)||0);sub+=t;r.querySelector('.item-total').textContent=money(t);});const tax=sub*(Number($('taxPercent').value)||0)/100;$('subtotal').textContent=money(sub);$('tax').textContent=money(tax);$('grandTotal').textContent=money(sub+tax);}
+async function saveInvoice(){const d={date:$('invoiceDate').value,customerId:$('customerSelect').value,customer:$('customer').value.trim(),phone:$('phone').value.trim(),email:$('email').value.trim(),address:$('address').value.trim(),taxPercent:Number($('taxPercent').value)||0,status:$('status').value,paymentMethod:$('paymentMethod').value,notes:$('notes').value.trim(),items:getItems()};if(!d.customer||!d.items.length)return toast(!d.customer?'Nama customer belum diisi.':'Minimal 1 item.',true);try{$('saveBtn').disabled=true;const r=await api('saveInvoice',{invoice:d});closeModal('formModal');await loadData();await previewInvoice(encodeURIComponent(r.invoiceNo));}catch(e){toast(e.message,true);}finally{$('saveBtn').disabled=false;}}
+async function previewInvoice(encoded){try{const i=await api('getInvoice',{invoiceNo:decodeURIComponent(encoded)});APP.currentInvoice=i;$('printArea').innerHTML=buildInvoiceHTML(i);openModal('previewModal');}catch(e){toast(e.message,true);}}
+function openPayment(encoded){const i=APP.invoices.find(x=>x.invoiceNo===decodeURIComponent(encoded));if(!i)return;APP.currentPaymentInvoice=i;$('paymentDate').value=todayLocal();$('paymentAmount').value=i.remainingAmount;$('paymentMethodInput').value='Transfer Bank';$('paymentNotes').value=i.paidAmount?'Pelunasan invoice':'Pembayaran invoice';$('paymentInfo').innerHTML=`<div class="payment-summary"><div><span>Total</span><b>${money(i.grandTotal)}</b></div><div><span>Terbayar</span><b>${money(i.paidAmount)}</b></div><div class="remaining"><span>Sisa</span><b>${money(i.remainingAmount)}</b></div></div><p><strong>${esc(i.invoiceNo)}</strong> — ${esc(i.customer)}</p>`;openModal('paymentModal');}
+async function recordPayment(){const i=APP.currentPaymentInvoice,a=Number($('paymentAmount').value)||0;if(!i||a<=0||a>i.remainingAmount+.01)return toast('Jumlah pembayaran tidak valid.',true);try{await api('recordPayment',{payment:{invoiceNo:i.invoiceNo,date:$('paymentDate').value,amount:a,method:$('paymentMethodInput').value,notes:$('paymentNotes').value}});closeModal('paymentModal');await loadData();await previewInvoice(encodeURIComponent(i.invoiceNo));}catch(e){toast(e.message,true);}}
+async function openPaymentHistory(i){if(!i)return;try{const d=await api('getPayments',{invoiceNo:i.invoiceNo});$('historyContent').innerHTML=d.payments.length?`<table class="history-table"><thead><tr><th>ID</th><th>Tanggal</th><th>Jumlah</th><th>Metode</th><th>Catatan</th></tr></thead><tbody>${d.payments.map(p=>`<tr><td>${esc(p.paymentId)}</td><td>${esc(p.date)}</td><td>${money(p.amount)}</td><td>${esc(p.method)}</td><td>${esc(p.notes)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">Belum ada pembayaran.</div>';openModal('historyModal');}catch(e){toast(e.message,true);}}
+function renderPayments(){const out=APP.invoices.filter(x=>x.remainingAmount>0);const total=APP.invoices.reduce((s,x)=>s+x.grandTotal,0),paid=APP.invoices.reduce((s,x)=>s+x.paidAmount,0),debt=APP.invoices.reduce((s,x)=>s+x.remainingAmount,0);$('paymentStats').innerHTML=kpi('Total Invoice',money(total),'sales')+kpi('Terbayar',money(paid),'paid')+kpi('Piutang',money(debt),'debt');$('receivableList').innerHTML=out.map(x=>`<tr><td>${esc(x.invoiceNo)}</td><td>${esc(x.customer)}</td><td>${money(x.grandTotal)}</td><td>${money(x.paidAmount)}</td><td><strong>${money(x.remainingAmount)}</strong></td><td><span class="status ${statusClass(x.status)}">${esc(x.status)}</span></td><td><button class="btn btn-primary btn-small" onclick="openPayment('${encodeURIComponent(x.invoiceNo)}')">Bayar</button></td></tr>`).join('')||emptyRow(7,'Tidak ada piutang.');}
+function buildInvoiceHTML(i){const s=APP.settings,rows=(i.items||[]).map(x=>`<tr><td>${x.no}</td><td>${esc(x.description)}</td><td>${x.qty}</td><td>${money(x.price)}</td><td>${money(x.total)}</td></tr>`).join('');return`<div class="invoice"><div class="invoice-top"><div><div class="company">${esc(s['Nama Perusahaan']||'SWA PERTANIAN')}</div><div class="company-sub">${esc(s['Alamat Perusahaan']||'')}</div></div><div class="invoice-title">INVOICE</div></div><div class="invoice-line"></div><div class="invoice-info"><div>Invoice To :<div class="customer-name">${esc(i.customer)}</div>${esc(i.phone)}<br>${esc(i.email)}<br>${esc(i.address)}</div><div class="right"><strong>Invoice No : ${esc(i.invoiceNo)}</strong><br>${esc(i.date)}<br><span class="print-status">${esc(i.status)}</span></div></div><table class="invoice-table"><thead><tr><th>NO</th><th>DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>TOTAL</th></tr></thead><tbody>${rows}</tbody></table><div class="invoice-bottom"><div class="payment">PAYMENT METHOD :<br><strong>${esc(i.paymentMethod)}</strong><br><br>Bank : ${esc(s['Nama Bank']||'')}<br>Account : ${esc(s['No. Rekening']||'')}<br>Name : ${esc(s['Atas Nama']||'')}</div><div class="summary"><div class="summary-row"><span>Subtotal</span><span>${money(i.subtotal)}</span></div><div class="summary-row"><span>Tax ${i.taxPercent}%</span><span>${money(i.tax)}</span></div><div class="summary-grand"><div class="summary-row"><span>GRAND TOTAL</span><span>${money(i.grandTotal)}</span></div></div><div class="summary-row"><span>PAID</span><span>${money(i.paidAmount)}</span></div><div class="summary-row"><span>REMAINING</span><span>${money(i.remainingAmount)}</span></div></div></div><div class="terms"><strong>Catatan / Syarat :</strong><br><br>${esc(i.notes||s['Syarat Pembayaran']||'')}</div><div class="footer"><span>${esc(s['Telepon']||'')}</span><span>${esc(s['Email']||'')}</span></div></div>`;}
+async function printReceipt(encoded){try{const i=await api('getInvoice',{invoiceNo:decodeURIComponent(encoded)}),p=(i.payments||[]).at(-1);$('printArea').innerHTML=`<div class="receipt"><div class="receipt-header"><div><div class="receipt-company">${esc(APP.settings['Nama Perusahaan']||'SWA PERTANIAN')}</div><div class="receipt-address">${esc(APP.settings['Alamat Perusahaan']||'')}</div></div><div class="receipt-title">KWITANSI</div></div><div class="invoice-line"></div><div>No. Kwitansi: <strong>${esc(p?.paymentId||'')}</strong></div><div class="receipt-body"><p>Sudah diterima dari:</p><h3>${esc(i.customer)}</h3><p>Uang sejumlah:</p><div class="receipt-amount">${money(p?.amount||i.paidAmount)}</div><p>Untuk pembayaran: ${esc(p?.notes||('Invoice '+i.invoiceNo))}</p><p>Metode: ${esc(p?.method||i.paymentMethod)}</p></div><div class="receipt-bottom"><div>Tanggal: ${esc(p?.date||todayDisplay())}</div><div class="signature">SWA PERTANIAN<br><br><br><strong>Penerima</strong></div></div></div>`;openModal('previewModal');setTimeout(()=>window.print(),100);}catch(e){toast(e.message,true);}}
+function renderReports(){const d=APP.dashboard;$('reportCards').innerHTML=kpi('Penjualan Bulan Ini',money(d.monthSales||0),'sales')+kpi('Pembayaran Bulan Ini',money(d.monthPaid||0),'paid')+kpi('Piutang',money(d.outstanding||0),'debt')+kpi('Stok Menipis',d.lowStock||0,'warning');renderRank('reportTop',d.topProducts||[]);}
+function openModal(id){$(id).classList.add('show');}function closeModal(id){$(id).classList.remove('show');}function money(v){return'Rp '+Number(v||0).toLocaleString('id-ID');}function todayLocal(){const d=new Date(),o=d.getTimezoneOffset();return new Date(d.getTime()-o*60000).toISOString().slice(0,10);}function todayDisplay(){const d=new Date();return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();}function statusClass(v){return String(v||'').toLowerCase().replace(/\s+/g,'-');}function toast(m,error=false){const x=$('toast');x.textContent=m;x.classList.add('show');x.style.background=error?'#b42318':'#172033';clearTimeout(window.__toast);window.__toast=setTimeout(()=>x.classList.remove('show'),2800);}function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}function escAttr(v){return esc(v);}function emptyRow(n,t){return`<tr><td colspan="${n}" class="empty">${t}</td></tr>`;}window.openCustomerForm=openCustomerForm;window.saveCustomer=saveCustomer;window.openProductForm=openProductForm;window.saveProduct=saveProduct;window.openStockForm=openStockForm;window.saveStock=saveStock;window.addCartById=addCartById;window.changeCart=changeCart;window.removeCart=removeCart;window.previewInvoice=previewInvoice;window.openPayment=openPayment;window.printReceipt=printReceipt;
