@@ -1,31 +1,44 @@
-# SWA Pertanian — Invoice Manager
+# SWA Pertanian — POS ERP V1
 
-Frontend GitHub Pages untuk invoice berbasis Google Sheets + Google Apps Script.
+POS + mini ERP berbasis GitHub Pages + Google Apps Script + Google Sheets.
 
-## Backend API
+## Fitur V1
+- Dashboard KPI
+- POS / Penjualan
+- Master Produk / Item
+- Master Customer
+- Invoice
+- Pembayaran, DP, pelunasan, kwitansi
+- Piutang
+- Stok otomatis saat penjualan
+- Stok masuk / keluar manual
+- Produk stok menipis
+- Laporan ringkas
 
-`js/app.js` sudah menggunakan Apps Script Web App:
+## Sheet yang digunakan
+Existing:
+- INVOICE
+- INVOICE_DETAIL
+- CUSTOMER
+- SETTINGS
 
-https://script.google.com/macros/s/AKfycbxkKovujMdEdhLqPkYp24adCWmBcX06s-HE3PVXJML36ORlOmH27n1qjKB08kBYZ429kA/exec
+Otomatis dibuat jika belum ada:
+- PAYMENT
+- PRODUCT
+- STOCK_MOVEMENT
 
-## Struktur
+### PRODUCT
+Header: Product ID, Kode Produk, Nama Produk, Kategori, Satuan, Harga Beli, Harga Jual, Stok, Minimum Stok, Supplier, Aktif
 
-```text
-swa-pertanian-invoice/
-├── index.html
-├── css/
-│   └── style.css
-├── js/
-│   └── app.js
-└── README.md
-```
+### STOCK_MOVEMENT
+Header: Movement ID, Tanggal, Product ID, Kode Produk, Nama Produk, Tipe, Qty, Referensi, Catatan
 
-## Catatan
+## Backend
+Ganti Code.gs di Apps Script dengan file Code.gs ini, lalu deploy sebagai Web App.
+Execute as: Me.
+Who has access: Anyone (sesuaikan kebijakan akses).
+Setelah perubahan Code.gs, buat deployment/version baru.
 
-- Tidak menggunakan logo perusahaan.
-- Branding aplikasi: SWA Pertanian.
-- Nuansa visual biru-putih bergaya corporate/agriculture.
-- Website field tidak ditampilkan di invoice.
-- Backend mengharapkan sheet yang sama dengan template Invoice: `INVOICE`, `INVOICE_DETAIL`, `CUSTOMER`, `SETTINGS`.
-- `getInitialData` harus mengembalikan `customers`, `invoices`, dan `settings`.
-- Penyimpanan invoice menggunakan payload `{ action: 'saveInvoice', invoice: {...} }`.
+## Frontend
+Upload index.html, css/style.css, js/app.js ke GitHub Pages.
+API URL sudah diarahkan ke Web App SWA Pertanian.
