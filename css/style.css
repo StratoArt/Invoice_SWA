@@ -69,3 +69,20 @@ body[data-entity="strato"] .invoice-line{background:#172033}
 body[data-entity="strato"] .btn-primary{background:#172033}
 body[data-entity="strato"] .btn-primary:hover{background:#101827}
 @media(max-width:800px){.entity-switch-wrap span{display:none}.entity-switch-wrap select{max-width:145px}.brand-logo{width:34px;height:34px}}
+.purchase-view-total{margin-top:18px;padding:12px;border-top:2px solid var(--line);text-align:right}.low{color:var(--red);font-weight:900}
+@media print{
+  @page{size:A4 portrait;margin:7mm}
+  html,body{width:210mm!important;min-height:0!important;height:auto!important;margin:0!important;padding:0!important;background:#fff!important}
+  .topbar,.sidebar,.main,.modal-actions,.preview-actions,.no-print,#genericModal,#formModal,#paymentModal,#historyModal,#purchaseModal{display:none!important}
+  #previewModal{display:block!important;position:static!important;width:100%!important;height:auto!important;min-height:0!important;overflow:visible!important;padding:0!important;margin:0!important;background:#fff!important}
+  #previewModal .modal-box{display:block!important;position:static!important;width:100%!important;max-width:none!important;height:auto!important;max-height:none!important;overflow:visible!important;padding:0!important;margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important}
+  #printArea{display:block!important;width:100%!important;margin:0!important;padding:0!important}
+  .invoice,.receipt{width:100%!important;max-width:none!important;min-height:0!important;height:auto!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important;page-break-before:auto!important;page-break-after:auto!important;page-break-inside:auto!important;break-inside:auto!important}
+  .invoice-top,.invoice-info,.invoice-bottom,.terms,.footer,.receipt-header,.receipt-bottom{break-inside:avoid!important;page-break-inside:avoid!important}
+  .invoice-table{width:100%!important;margin-top:12px!important;page-break-inside:auto!important;break-inside:auto!important}
+  .invoice-table tr{break-inside:avoid!important;page-break-inside:avoid!important}
+  .invoice-table thead{display:table-header-group!important}
+  .invoice-table th{background:#172033!important;color:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  .invoice-line{background:#0057b8!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  .footer{margin-top:12px!important}
+}
