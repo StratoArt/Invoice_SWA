@@ -15,7 +15,25 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadData();
 });
 function bind(id,prop,fn){const el=$(id);if(el)el[prop]=fn;}
-async function api(action,payload={}){const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload})});if(!r.ok)throw Error('HTTP Error '+r.status);const d=await r.json();if(d.success===false)throw Error(d.message||'API error');return d;}
+const READ_ACTIONS=new Set(['getInitialData','getInvoices','getInvoice','getPayments','getDashboard']);
+async function api(action,payload={}){
+  if(READ_ACTIONS.has(action)) return apiGet(action,payload);
+  const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload})});
+  if(!r.ok)throw Error('HTTP Error '+r.status);
+  const d=await r.json();
+  if(d.success===false)throw Error(d.message||'API error');
+  return d;
+}
+async function apiGet(action,payload={}){
+  const params=new URLSearchParams({action});
+  Object.entries(payload||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)params.set(k,String(v));});
+  const r=await fetch(API_URL+'?'+params.toString(),{method:'GET',cache:'no-store'});
+  if(!r.ok)throw Error('HTTP Error '+r.status);
+  const d=await r.json();
+  if(d.success===false)throw Error(d.message||'API error');
+  if(action==='getInitialData'&&!Array.isArray(d.invoices))throw Error('Response getInitialData tidak berisi data invoice. Pastikan Code.gs terbaru sudah di-deploy.');
+  return d;
+}
 async function loadData(){try{setConnection('● Syncing');const d=await api('getInitialData');APP.customers=d.customers||[];APP.invoices=d.invoices||[];APP.products=d.products||[];APP.settings=d.settings||{};APP.dashboard=d.dashboard||{};renderAll();setConnection('● Online');}catch(e){console.error('INITIAL DATA ERROR',e);try{const d=await api('getInvoices');APP.invoices=d.invoices||[];APP.customers=APP.customers||[];APP.products=APP.products||[];APP.settings=APP.settings||{};renderInvoices();renderPayments();setConnection('● Partial');toast('Invoice berhasil dimuat, tetapi sebagian data ERP belum tersambung.',true);}catch(e2){console.error('INVOICE FALLBACK ERROR',e2);setConnection('● Offline');toast((e2.message||e.message||'Gagal mengambil data.')+' — cek deployment Apps Script.',true);}}}
 function renderAll(){renderCustomers();renderCustomerTable();renderInvoices();renderProducts();renderStock();renderStats();renderDashboard();renderPicker();renderCart();renderPayments();renderReports();}
 function showPage(page){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));$('page-'+page)?.classList.add('active');document.querySelector(`.nav[data-page="${page}"]`)?.classList.add('active');}

@@ -42,3 +42,7 @@ Setelah perubahan Code.gs, buat deployment/version baru.
 ## Frontend
 Upload index.html, css/style.css, js/app.js ke GitHub Pages.
 API URL sudah diarahkan ke Web App SWA Pertanian.
+
+
+## V1.2 API fix
+Versi ini menggunakan GET untuk endpoint read-only (`getInitialData`, `getInvoices`, `getInvoice`, `getPayments`, `getDashboard`) agar pembacaan data tidak bergantung pada POST. Setelah mengganti `Code.gs`, **Deploy > Manage deployments > Edit > New version > Deploy**. URL Web App tetap sama.
